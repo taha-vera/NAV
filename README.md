@@ -34,3 +34,4 @@ buffer.commit_window(data)
 - Format compatible avec transmission ANCRE → VERA
 - Support des requêtes de vérification
 - Export complet de chaîne
+# NAV v0.1
