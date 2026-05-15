@@ -1,49 +1,54 @@
-import time
-import hashlib
-import json
-from collections import deque
-from datetime import datetime, timedelta
+
+import threading
+from datetime import datetime, timezone
+from dataclasses import dataclass
+from typing import Optional
+from enum import Enum
+
+WINDOW_TIMEOUT_SEC = 3600
+K_MIN = 100
+MAX_SIGNALS = 10_000
+
+class WindowState(Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+    EXPIRED = "expired"
+    CONSUMED = "consumed"
 
 class AggregationWindow:
-    def __init__(self, window_size_hours=6):
-        self.window_size = timedelta(hours=window_size_hours)
-        self.buffer = deque()
-        self.window_start = None
-        self.is_open = False
+    def __init__(self, window_id):
+        self.window_id = window_id
+        self._signals = []
+        self._lock = threading.Lock()
+        self._state = WindowState.OPEN
+        self._opened_at = datetime.now(timezone.utc)
 
-    def open_window(self):
-        self.window_start = datetime.now()
-        self.is_open = True
-        self.buffer.clear()
-        print(f"[{self.window_start}] Window opened (H6)")
-        return self.window_start
+    def add_signal(self, value):
+        with self._lock:
+            if self._state != WindowState.OPEN: return False
+            if len(self._signals) >= MAX_SIGNALS: return False
+            if not (0.0 <= value <= 1.0): return False
+            self._signals.append(value)
+            return True
 
-    def add_point(self, timestamp, value):
-        if not self.is_open:
-            raise RuntimeError("Window is closed")
-        if timestamp < self.window_start:
-            raise ValueError("Timestamp before window start")
-        if timestamp > self.window_start + self.window_size:
-            raise ValueError("Timestamp exceeds window size (H6)")
-        self.buffer.append({
-            'timestamp': timestamp.isoformat(),
-            'value': value,
-            'hash': hashlib.sha256(f'{timestamp}{value}'.encode()).hexdigest()[:8]
-        })
-        return len(self.buffer)
+    def close(self):
+        with self._lock:
+            if self._state == WindowState.OPEN:
+                self._state = WindowState.CLOSED
+            return {"n": len(self._signals), "state": self._state}
 
-    def close_window(self):
-        if not self.is_open:
-            return None
-        self.is_open = False
-        window_end = self.window_start + self.window_size
-        result = {
-            'window_start': self.window_start.isoformat(),
-            'window_end': window_end.isoformat(),
-            'duration_hours': self.window_size.total_seconds() / 3600,
-            'points_count': len(self.buffer),
-            'data': list(self.buffer),
-            'hash': hashlib.sha256(json.dumps(self.buffer, sort_keys=True).encode()).hexdigest()
-        }
-        print(f"[{datetime.now()}] Window closed — {len(self.buffer)} points")
-        return result
+    def get_signals(self):
+        with self._lock:
+            if self._state != WindowState.CLOSED:
+                raise RuntimeError("Fenetre doit etre CLOSED")
+            return list(self._signals)
+
+    @property
+    def is_ready(self):
+        with self._lock:
+            return self._state == WindowState.CLOSED and len(self._signals) >= K_MIN
+
+    @property
+    def signal_count(self):
+        with self._lock:
+            return len(self._signals)

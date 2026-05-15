@@ -1,62 +1,44 @@
-import json
-import hashlib
-from collections import deque
-from datetime import datetime, timedelta
+
+import threading
+from nav_window import AggregationWindow, WindowState, K_MIN
+import uuid
 
 class NAVBuffer:
-    """Non-volatile buffer for VERA aggregation node"""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._active = None
+        self._queue = []
+        self._total_signals = 0
 
-    def __init__(self, max_windows=168):
-        self.windows = deque(maxlen=max_windows)
-        self.last_commit = None
+    def receive(self, value, device_id=""):
+        with self._lock:
+            if self._active is None:
+                self._active = AggregationWindow(str(uuid.uuid4())[:8])
+            ok = self._active.add_signal(value)
+            if ok:
+                self._total_signals += 1
+            return ok
 
-    def commit_window(self, window_data):
-        """Commit a closed aggregation window to buffer"""
-        window_data['committed_at'] = datetime.now().isoformat()
-        window_data['seq'] = len(self.windows)
-        self.windows.append(window_data)
-        self.last_commit = datetime.now()
-        print(f"Window committed — Seq #{window_data[\"seq\"]}")
-        return window_data["seq"]
+    def close_active(self):
+        with self._lock:
+            if self._active is None:
+                return None
+            meta = self._active.close()
+            if self._active.is_ready:
+                self._queue.append(self._active)
+            self._active = None
+            return meta
 
-    def get_window(self, seq):
-        """Retrieve window by sequence number"""
-        if seq < 0 or seq >= len(self.windows):
-            return None
-        return self.windows[seq]
+    def next_ready(self):
+        with self._lock:
+            return self._queue.pop(0) if self._queue else None
 
-    def get_windows_since(self, timestamp):
-        """Get all windows after given timestamp"""
-        result = []
-        for w in self.windows:
-            if datetime.fromisoformat(w['window_start']) >= timestamp:
-                result.append(w)
-        return result
+    @property
+    def queue_size(self):
+        with self._lock:
+            return len(self._queue)
 
-    def verify_integrity(self, seq):
-        """Verify hash chain integrity for a window"""
-        if seq >= len(self.windows):
-            return False, "Window not found"
-
-        window = self.windows[seq]
-        computed = hashlib.sha256(json.dumps(window['data'], sort_keys=True).encode()).hexdigest()
-
-        if computed != window['hash']:
-            return False, "Hash mismatch — data corrupted"
-
-        if seq > 0:
-            prev = self.windows[seq-1]
-            if window['window_start'] <= prev['window_start']:
-                return False, "Sequence violation — window order"
-
-        return True, "OK"
-
-    def export_chain(self):
-        """Export full chain for VERA transmission"""
-        return {
-            'chain_length': len(self.windows),
-            'last_seq': len(self.windows) - 1 if self.windows else -1,
-            'last_commit': self.last_commit.isoformat() if self.last_commit else None,
-            'windows': list(self.windows),
-            'chain_hash': hashlib.sha256(json.dumps(list(self.windows), sort_keys=True).encode()).hexdigest()
-        }
+    @property
+    def active_count(self):
+        with self._lock:
+            return self._active.signal_count if self._active else 0
