@@ -1,37 +1,44 @@
-# NAV — Noeud d'Aggrégation VERA
+# NAV v0.1 — Noeud d'Agregation VERA
 
-**VERA aggregation node** — manages ANCRE windows lifecycle (H6)
+VERA aggregation node — enforces ANCRE hypotheses H1, H2, H6 as structural invariants.
 
-## Composants
+## Role
 
-- AggregationWindow — Fenêtre H6 avec validation temporelle
-- NAVBuffer — Buffer non-volatile avec chaînage cryptographique
+NAV manages the full window lifecycle:
+OPEN -> CLOSED -> AGGREGATED
 
-## Utilisation
+Raw signals are destroyed after aggregation.
+This enforces GDPR Article 25 data minimization.
 
-```python
-from nav_window import AggregationWindow
-from nav_buffer import NAVBuffer
+## Hypotheses Enforced
 
-win = AggregationWindow()
-win.open_window()
-from datetime import datetime
-win.add_point(datetime.now(), 42.0)
-data = win.close_window()
+| Hypothesis | Enforcement | Status |
+|---|---|---|
+| H1 — one signal per SIM | max_per_device=1 | [ARCHITECTURAL] |
+| H2 — bounded signals [0,1] | validation at ingestion | [ARCHITECTURAL] |
+| H6 — closed window before aggregate | WindowState.CLOSED | [ARCHITECTURAL] |
 
-buffer = NAVBuffer()
-buffer.commit_window(data)
-```
+## Components
 
-## Intégrité
+- nav_window.py  — window lifecycle management
+- nav_buffer.py  — signal buffer with H2 enforcement
+- vera_d.py      — VERA-D temporal degradation policy
 
-- Hash SHA256 par fenêtre
-- Chaînage séquentiel
-- Validation temporelle H6 stricte
+## VERA-D Policy
 
-## VERA Compliance
+FRESH   (0-30d)   — aggregate intact
+LIGHT   (30-90d)  — noise augmentation
+STRONG  (90-180d) — strong noise augmentation
+INVALID (180d+)   — returns None
 
-- Format compatible avec transmission ANCRE → VERA
-- Support des requêtes de vérification
-- Export complet de chaîne
-# NAV v0.1
+VERA-D is [OPERATIONAL]+[CONJECTURAL] — a governance policy,
+not a formal DP extension.
+
+## Integration
+
+NAV feeds into ANCRE pipeline:
+https://github.com/taha-vera/ancre-final
+
+## License
+
+MIT — Taha Houari, SAS VERA Paris
