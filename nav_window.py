@@ -19,11 +19,18 @@ class AggregationWindow:
     def __init__(self, window_id):
         self.window_id = window_id
         self._signals = []
+        self._seen_devices = set()  # H1: track device contributions
         self._lock = threading.Lock()
         self._state = WindowState.OPEN
         self._opened_at = datetime.now(timezone.utc)
 
-    def add_signal(self, value):
+    def add_signal(self, value, device_id=None):
+        # H1: max_per_device=1 — one signal per SIM per window
+        if device_id is not None:
+            with self._lock:
+                if device_id in self._seen_devices:
+                    raise ValueError(f'H1 violation: device {device_id} already contributed')
+                self._seen_devices.add(device_id)
         with self._lock:
             if self._state != WindowState.OPEN: return False
             if len(self._signals) >= MAX_SIGNALS: return False
