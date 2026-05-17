@@ -26,13 +26,13 @@ class AggregationWindow:
 
     def add_signal(self, value, device_id=None):
         # H1: max_per_device=1 — one signal per SIM per window
-        if device_id is not None:
-            with self._lock:
+        # Single lock block to prevent race condition between H1 check and state check
+        with self._lock:
+            if self._state != WindowState.OPEN: return False
+            if device_id is not None:
                 if device_id in self._seen_devices:
                     raise ValueError(f'H1 violation: device {device_id} already contributed')
                 self._seen_devices.add(device_id)
-        with self._lock:
-            if self._state != WindowState.OPEN: return False
             if len(self._signals) >= MAX_SIGNALS: return False
             if not (0.0 <= value <= 1.0): return False
             self._signals.append(value)
